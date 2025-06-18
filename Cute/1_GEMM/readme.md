@@ -1,3 +1,9 @@
+# benchmark
+__A100__ ： gemm-simple 对比cublas实现：
+![alt text](./pic/compare.jpg)
+
+
+
 # 前置知识
 ## Tensorcore
 Tensorcore有两种方式可以进行调用
