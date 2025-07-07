@@ -16,7 +16,7 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
     int ix = blockIdx.x;
     int iy = blockIdx.y;
     // Tile 级别分解
-    // 坐标为第四象限， 这里gB的make_coord(ix, _)即为取出B tile中的一行，其shape 为(kTileN, k)
+    // 坐标为第四象限,这里gB的make_coord(ix, _)即为取出B tile中的一行，其shape 为(kTileN, k)
     // 或者可以记为(kTileN, kTileK, num_tile_k)
     Tensor gA = local_tile(A, make_tile(Int<kTileM>{}, Int<kTileK>{}), make_coord(iy, _));
     Tensor gB = local_tile(B, make_tile(Int<kTileN>{}, Int<kTileK>{}), make_coord(ix, _));

@@ -1,7 +1,11 @@
 # benchmark
+## gemm-simple
 __A100__ ： gemm-simple 对比cublas实现：
 ![alt text](./pic/compare.jpg)
 
+
+gemm-simple中每次计算kTileK都需要将数据从`global mem` __copy__ 到 `register mem`中，因此内存带宽的利用率非常高，如下图所示：
+![alt text](./pic/gemm-simple_bandwidth.png)
 
 
 # 前置知识
@@ -45,6 +49,11 @@ cute作为高性能的原语表示和抽象，基于`mma`实现，对数据和�
         * 一个CTA应该负责计算的`C`矩阵块的逻辑尺寸(for example: 128 x 128)
         * 定义如何在K维度上进行迭代，每次迭代从global mem中load多少数据到shared mem
         * 是策略描述器，而不是具体的执行者，他不会告诉某个特定的threadIdx.x应该做什么
+    ```c++
+        using MMA = decltype(make_tiled_mma(mma_atom{}, 
+                      make_layout(Shape<_2, _2, _1>{}), 
+                      make_layout(Shape<_1, _2, _1>{})));
+    ```
 
     * __Why Tile？__
         * 有些指令是Warp level的，但是code编写的都是线程级别的指令即`单线程`视角下的指令, 即便`__shfl_sync`等Warp级别操作，也是通过编译器和驱动层将这些线程级别的调用转化为底层的Warp级硬件指令
@@ -118,3 +127,59 @@ thr_mma = tiled_mma.get_slice(threadIdx.x): 每个线程（threadIdx.x）通过 
 * 输出形状: (MMA, MMA_M, MMA_K) (注意，没有 num_tile_k)
     * 这表示 tArA 存储的是当前正在处理的、单个 (MMA_M, MMA_K) 大小的矩阵A片段的实际数据。这些数据通常已经被加载到线程的私有寄存器中，或者通过共享内存加载到寄存器中，等待立即参与MMA操作。
 * 作用: tArA 是实际的数据容器。它包含了MMA操作当前步骤所需的精确数据。在矩阵乘法的 K 循环中，每次迭代都会调用 partition_fragment_A（或类似的加载操作），将新的 K 瓦片数据加载到 tArA 中，然后进行一次 mma_sync 操作。
+
+
+## Swizzle
+### Shared Memory
+线程间交换数据，对于线程块公共使用的数据可以存储在其中以便达到线程块级别的可编程。  
+* __Bank:__ 为了保证多线程块并行对shared mem进行访问，硬件被实现为多bank的模式，
+* 每个bank都是可以独立寻址的存储空间，bank之间可以并行读写数据  
+shared mem包含32个bank，bank中可以寻址的基本单元为4byte。  
+当32个线程同时访问32个不同的bank时，各个bank并行执行，其效率最高，即32个线程并行的访问32个bank中不同的颜色单元。
+![alt text](./pic/bank.png)
+
+* __Bank conflict:__ 当某两个thread T0、T2要同时访问相同bank—2的不同地址的时候，这两次访问会被**排队**， 即先访问该bank的一个地址，再访问第二个地址。这两次访问在**发射任务维度**(产生访问请求指令)时间维度上是并行，但是bank在读写数据的时候是**串行**的，这就是`bank conflict`。 由于一个bank上有两次冲突，这种情况称为两路冲突(two-way conflict)![alt text](./pic/bank_conflict-2way.png)
+
+
+* __向量化读写:__ 在kernel优化的时候一般以`float4`进行向量化读取，此时共享内存的一次读写大小为**128bit**, 此线程需要访问的单位数据量为16 byte, 32个线程需要访问数据量为 512 byte. 完整的512 byte访问需要4个phase才能完成访问。
+
+### 共享内存读取(ldmatrix instruction)
+**优点**
+1. ldmatrix 加载可以通过线程提供共享内存地址(提供16byte数据)完成数据的加载然后将数据分配到warp中各个线程寄存器中，实现跨`SIMT`寄存器边界的写出。相较于`SIMT`的`LDS` 减少了读写的指令。
+2. ldmatrix 可以实现**warp level** 共享内存到寄存器的数据搬运
+
+**介绍**
+* ldmatrix以warp为单位，从shared mem中加载一个或者多个8x8矩阵到warp threads的regisger中
+* 在GEMM流水线中，矩阵数据是warp内的所有线程提供一部分寄存器共同表示的。如下图所示，每个线程提供一个寄存器V0(4byte)。这部分数据通过`ldmatrix`指令的warp level实现。针对一个8x8-half的寄存器表示的作为输出的矩阵块，ldmatrix其输入要求为8个shared memory地址，每个地址指向一个16byte共享内存中的数据，其中T0-Addr0指向的16byte数据经过ldmatrix会被分派到T0-T3的V0寄存器中。  
+* 通过`ldmatrix`指令即可完成矩阵数据从共享内存到寄存器的加载，前面的介绍我们知道共享内存是有bank结构的，并且按照16byte的形式读取，所以T0~T7读取该数据时候会被作为一个独立的Phase, 因此所有16byte 表示的8个数据必须分布在不同的bank，才能确保没有bank conflict。比如下图的布局:![alt text](./pic/ld_matrix.png)
+
+### shared mem 写入
+矩阵数据流向如下图所示：
+![alt text](./pic/shared_mem_read.png)  
+
+* shared mem ==> register mem:
+    * 共享内存由于有bank的存在，其块状数据在共享内存存储时不是简单行列排列。需要根据ldmatrix的要求来避免冲突，这样从全局内存读取数据后写入共享内存时，也需要按照逻辑要求进行存储空间的映射。 
+* 全局==> shared mem：
+    * 合并访存
+    * L2 Cache line  
+    线程沿着线性地址的空间顺序排列，如T0->Tn所示。即在做global mem => shared mem数据搬运时候，思考模型是逻辑空间，而执行需要考虑存储空间以避免bank conflict
+
+### Swizzle 抽象
+ cute中通过swizzle抽象来实现共享内存bank conflict的冲突解决。
+ * swizzle的本质是函数，作用在layout上，即函数作用在函数上
+ * 通过将shared memory的**数据进行重排** 来避免conflict，从下图可以看到，每一行/列的每个元素的bank值不同
+ ![alt text](./pic/swizzle_data.png) 
+ * layout的作用是给定坐标返回**offset** ，而swizzle的作用则是给定**offset**返回**bank conflict free**的offset
+ * __逻辑位置和物理位置:__
+    * 逻辑位置表示元素在矩阵中的逻辑坐标
+    * 物理位置表示其对应元素在实际存储数据的shared mem中的位置坐标  
+在swizzle机制中，逻辑位置和物理位置存在映射关系，映射一一对应，且不会扩大原始数据的取值范围
+ Swizzle有三个参数，描述了一维坐标向二维空间映射的三个层次:
+ 1. __B:__ 新的二维空间中有多少行， $2^B$
+ 2. __M:__ 一维坐标中连续的 $2^M$ 个数字构成二维空间中的**基本元素**  
+ 3. __S:__ 新的二维空间有多少列,    $2^S$
+ 如下图所示：当B=1,M=1,S=2时。对二维空间2-D(a)进行异或后得到新的二维空间2-D(b).如果一维坐标映射后超过了 $2^B$
+ 大小，则超出的部分的行号从0开始记，但是offset上要加上前面的所有的元素个数。![alt text](./pic/swizzle_xor.png)
+
+ **例子:**  
+ 假设有一块half类型，shape:(8,32), stride(32,1)的共享内存。定义Swizzle<3,3,3>作用到该shared memory layout上，形成A = Composition(Swizzle<3,3,3>, Layout<<Shape<8,32>, Stride<32,1>{}>); 则layout中有效的offset为0~256.Swizzle中M为3，所以**8个元素形成一个新的最小的元素**， 即`minimal_element = 8 x 2 = 16 byte`, Swizzle中S为3，即一行中有8个元素，则有`8 x 16 = 128 byte`。 此时128 byte为shared mem中无conflict访问所有bank的最大宽度. 异或后得到的新的列号，避免了在bank方向的冲突
