@@ -1,2 +1,5 @@
 *.ncu-rep
 gemm_simple_2
+profile_rep
+gemm_simple
+gemm-multi-stage

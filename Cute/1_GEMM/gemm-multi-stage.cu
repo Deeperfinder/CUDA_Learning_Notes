@@ -123,11 +123,13 @@ gemm_multi_stage(void *Dptr, const void *Aptr, const void *Bptr, int m, int n,
 
   int ik = 0;
   // smem -> reg
+  // 在主循环开始之前，预先加载第一批计算所需的数据
   cute::copy(s2r_tiled_copy_a, tAsA(_, _, ik, ismem_read), tCrA_view(_, _, ik));
   cute::copy(s2r_tiled_copy_b, tBsB(_, _, ik, ismem_read), tCrB_view(_, _, ik));
 
   // loop over k: i. load tile, ii. mma
   int ntile = k / kTileK;
+  // 禁止展开循环，该循环末尾有_syncthreads()同步
 #pragma unroll 1
   for (int itile = 0; itile < ntile; ++itile) {
     int nk = size<2>(tCrA);
@@ -135,20 +137,21 @@ gemm_multi_stage(void *Dptr, const void *Aptr, const void *Bptr, int m, int n,
 #pragma unroll
     for (int ik = 0; ik < nk; ++ik) {
       int ik_next = (ik + 1) % nk;
-
+      
+      //当 ik 内部的s2r 最后一次迭代
       if (ik == nk - 1) {
         cp_async_wait<kStage - 2>();
         __syncthreads();
-
-        ismem_read = (ismem_read + 1) % kStage;
+        // 切换缓冲区为上一次stage 1 的写入缓冲区
+        ismem_read = (ismem_read + 1) % kStage; 
       }
-
+      // STAGE 2: 为下一次 ik 迭代做准备(Shared Memory -> registers)
       // shm -> reg s[itile][ik + 1] -> r[ik + 1]
       cute::copy(s2r_tiled_copy_a, tAsA(_, _, ik_next, ismem_read),
                  tCrA_view(_, _, ik_next));
       cute::copy(s2r_tiled_copy_b, tBsB(_, _, ik_next, ismem_read),
                  tCrB_view(_, _, ik_next));
-
+      // STAGE 1: 为下一个tile 迭代做准备(Global Memory -> Shared Memory)
       if (ik == 0) {
         if (itile_to_read < ntile) {
           cute::copy(g2s_tiled_copy_a, tAgA_copy(_, _, _, itile_to_read),
@@ -157,12 +160,15 @@ gemm_multi_stage(void *Dptr, const void *Aptr, const void *Bptr, int m, int n,
                      tBsB_copy(_, _, _, ismem_write));
 
           ++itile_to_read;
-          ismem_write = (ismem_write + 1) % kStage;
+          ismem_write = (ismem_write + 1) % kStage; // 切换到下一个写入缓冲区
         }
+        // 提交所有已经发出的异步拷贝请求
+        // 内存序屏障，确保在cp_async_fence()之后的cp.async.wait_group或者计算指令都能看到这些提交
 
-        cp_async_fence();
+        cp_async_fence();  // 确保之前的cp.async操作都已经发出
       }
-
+      // STAGE 1
+      // 使用在上一次ik迭代中加载好的数据
       cute::gemm(tiled_mma, tCrD, tCrA(_, _, ik), tCrB(_, _, ik), tCrD);
     }  // for ik
   }    // itile
@@ -267,7 +273,7 @@ struct GemmConfig {
 
   // 5. 最终组装 TiledMMA
   using MMA = decltype(make_tiled_mma(mma_atom{}, MMA_EU_RepeatT{}, MMA_P_T{}));
-
+    // 异步拷贝指令
   using g2s_copy_op = SM80_CP_ASYNC_CACHEGLOBAL<cute::uint128_t>;
   using g2s_copy_traits = Copy_Traits<g2s_copy_op>;
   using g2s_copy_atom = Copy_Atom<g2s_copy_traits, T>;
