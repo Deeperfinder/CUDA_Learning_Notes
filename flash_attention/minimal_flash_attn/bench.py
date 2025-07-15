@@ -35,7 +35,7 @@ from torch.utils.cpp_extension import load
 # 这个过程是“即时的”（Just-In-Time），因为它是在你运行 Python 脚本时发生的，而不是预先编译好的。PyTorch 还会缓存编译结果，所以如果你不修改 C++ 代码，下次运行会快得多。
 # """
 # Load the CUDA kernel as a python module
-minimal_attn = load(name='minimal_attn', sources=['main.cpp', 'flash.cu'], extra_cuda_cflags=['-O2'])
+minimal_attn = load(name='minimal_attn', sources=['main.cpp', 'flash.cu', 'flashv2.cu'], extra_cuda_cflags=['-O2'], verbose=True)
 
 # Use small model params, otherwise slower than manual attention. See caveats in README.
 batch_size = 16
@@ -46,10 +46,13 @@ head_embd = 64
 q = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
 k = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
 v = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
-
+minimal_attn.forward_V2(q,k,v)
 print('=== profiling manual attention ===')
 
 # Our minimal flash attention aims to be faster than this by avoiding HBM read/writes of N^2 matrices.
+# 这里需要注意的一点是，softmax的维度为-1， 即(b, nh, seq_i, seq_j), 
+# 其中i代表着Q的location， J代表K的localtion。那为什么要指定-1呢？
+# 因为注意力机制的目的是为每一个查询(Query)生成一个独立的、定制化的权重分布
 def manual_attn(q, k, v):
     att = (q @ k.transpose(-2, -1) * (1.0 / math.sqrt(k.size(-1))))
     att = F.softmax(att, dim=-1)

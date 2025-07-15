@@ -1,9 +1,11 @@
 #include <torch/extension.h>
 
 torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v);
+torch::Tensor forward_V2(torch::Tensor q, torch::Tensor k, torch::Tensor v);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("forward", torch::wrap_pybind_function(forward), "forward");
+    m.def("forward_V2", torch::wrap_pybind_function(forward_V2), "forward_V2");
 }
 
 /*"""
