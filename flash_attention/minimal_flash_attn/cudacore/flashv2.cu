@@ -39,6 +39,7 @@ __global__ void forward_V2_kernel(const float* Q, const float* K,
             }
             
             float row_m = -INFINITY;
+            #pragma unroll
             for(int y=0; y<Bc; y++){
                 float sum = 0;
                 for(int x=0; x<d; x++){
@@ -47,7 +48,7 @@ __global__ void forward_V2_kernel(const float* Q, const float* K,
                 sum *=softmax_scale;
                 // S = [Bc, Bc]
                 S[tx*Bc + y] = sum;
-                if(sum > row_m) row_m = sum;
+                row_m = max(row_m, sum);
             }
             row_m_new = max(row_m_prev, row_m);
             // P = exp(S - row_m), row_l = rowsum(P)
@@ -59,6 +60,7 @@ __global__ void forward_V2_kernel(const float* Q, const float* K,
             row_l_new = (__expf(row_m_prev - row_m_new) * row_l_prev) + row_l;
 
             // Write O, l, m to HBM
+            #pragma unroll
             for(int x=0; x<d; x++){
                 float pv = 0;
                  // [Bc, Bc] * [Bc, d], 这里是行乘以列，要注意Vj的索引

@@ -3,3 +3,5 @@ gemm_simple_2
 profile_rep
 gemm_simple
 gemm-multi-stage
+*.nsys-rep
+__pycache__

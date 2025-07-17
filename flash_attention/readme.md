@@ -5,7 +5,7 @@
 # minimal_flash_attn
 ## 性能测试
 ### A10
-在batch_size、head_num、head_dim不变的情况下，使用bench.py对不同seq_len的测试结果如下：<br>
+在batch_size=16、head_num=16、head_dim=64不变的情况下，使用bench.py对不同seq_len的测试结果如下：<br>
 ![Time Comparison Plot](minimal_flash_attn/images/time_compare.jpg)<br>
 | seq_len | manual_attention| flash_attention | flash_attention_v2 |
 |---------|-----------------|----------------|--------------------|

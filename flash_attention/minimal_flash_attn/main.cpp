@@ -2,10 +2,15 @@
 
 torch::Tensor forward(torch::Tensor q, torch::Tensor k, torch::Tensor v);
 torch::Tensor forward_V2(torch::Tensor q, torch::Tensor k, torch::Tensor v);
+torch::Tensor forward_v1_tensorcore(torch::Tensor q, torch::Tensor k, torch::Tensor v, bool use_tensorcores);
+torch::Tensor forward_v2_cutlass(torch::Tensor q, torch::Tensor k, torch::Tensor v);
+
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("forward", torch::wrap_pybind_function(forward), "forward");
     m.def("forward_V2", torch::wrap_pybind_function(forward_V2), "forward_V2");
+    m.def("forward_v1_tensorcore", torch::wrap_pybind_function(forward_v1_tensorcore), "forward_v1_tensorcore");
+    m.def("forward_v2_cutlass", torch::wrap_pybind_function(forward_v2_cutlass), "forward_v2_cutlass");
 }
 
 /*"""

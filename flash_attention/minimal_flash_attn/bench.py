@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from torch.utils.cpp_extension import load
-
 # """
 # 这行代码是整个魔法的起点。让我们分解 load 函数的作用：
 
@@ -36,16 +35,12 @@ from torch.utils.cpp_extension import load
 # 加载: 将这个新生成的共享库动态加载到当前的 Python 进程中。
 # 返回模块: 返回一个代表这个已加载库的 Python 模块对象。
 # 这个过程是“即时的”（Just-In-Time），因为它是在你运行 Python 脚本时发生的，而不是预先编译好的。PyTorch 还会缓存编译结果，所以如果你不修改 C++ 代码，下次运行会快得多。
-# """
-# Load the CUDA kernel as a python module
-minimal_attn = load(name='minimal_attn', 
-                    sources=['main.cpp', 'flash.cu', 'flashv2.cu'], 
-                    extra_cuda_cflags=['-O2', '-gencode=arch=compute_86,code=sm_86'], 
-                    verbose=True)
+
+os.environ['TORCH_CUDA_ARCH_LIST'] = '8.0'  # Ampere
 
 # Load the CUDA kernel as a python module
 minimal_attn = load(name='minimal_attn', 
-                    sources=['main.cpp', 'flash.cu', 'flashv2.cu'], 
+                    sources=['main.cpp', './cudacore/flash.cu', './cudacore/flashv2.cu', './tensorcore/flash_v1_wmma.cu', './tensorcore/flash_v2_cutlass.cu'], 
                     extra_cuda_cflags=['-O2', '-gencode=arch=compute_86,code=sm_86'], 
                     verbose=True)
 
@@ -74,6 +69,7 @@ def run_with_profiling(q, k, v):
     # Compare results
     print('flash attn1 values sanity check:', torch.allclose(minimal_result, manual_result, rtol=0, atol=1e-02))
     print('flash attn2 values sanity check:', torch.allclose(fa2_minimal_res, manual_result, rtol=0, atol=1e-02))
+
 def bench(fn, num_warmups: int = 20, num_tests: int = 30, post_fn=None):
     # Flush L2 cache with 256 MB data
     torch.cuda.synchronize()
@@ -144,14 +140,18 @@ def run_with_timing(q, k, v):
     manual_avg_time = bench(lambda: manual_attn(q, k, v))[0]
     flash_avg_time = bench(lambda: minimal_attn.forward(q, k, v))[0]
     flash_v2_avg_time = bench(lambda: minimal_attn.forward_V2(q, k, v))[0]
-    print("manual attention: %.3f ms" % (manual_avg_time * 1000))
-    print("flash attention: %.3f ms" % (flash_avg_time * 1000))
-    print("flash attention v2: %.3f ms" % (flash_v2_avg_time * 1000))
+    flash_v1_tensorcore_time = bench(lambda: minimal_attn.forward_v1_tensorcore(q, k, v, True))[0]
+    flash_v2_cutlass_time = bench(lambda: minimal_attn.forward_v2_cutlass(q, k, v))[0]
+    print("[manual attention]: %.3f ms" % (manual_avg_time * 1000))
+    print("[flash attention]: %.3f ms" % (flash_avg_time * 1000))
+    print("[flash attention v2]: %.3f ms" % (flash_v2_avg_time * 1000))
+    print("[flash attention v1 tensorcore]: %.3f ms" % (flash_v1_tensorcore_time * 1000))
+    print("[flash attention v2 cutlass]: %.3f ms" % (flash_v2_cutlass_time * 1000))
 def main(args):
     # Use small model params, otherwise slower than manual attention. See caveats in README.
     batch_size = 16
-    n_head = 16
-    seq_len = 1280
+    n_head =16
+    seq_len = 512
     head_embd = 64
 
     q = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
@@ -161,8 +161,8 @@ def main(args):
     if args.prof:
         run_with_profiling(q, k, v)
     else:
-        run_without_profiling(q, k, v)
-        # run_with_timing(q, k, v)
+        # run_without_profiling(q, k, v)
+        run_with_timing(q, k, v)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run attention benchmark with or without profiling.")
