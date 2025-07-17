@@ -4,9 +4,17 @@
 
 # minimal_flash_attn
 ## 性能测试
+```bash
+seq_len=512, batch_size=16, head_num=16, head_dim=64
+[manual attention]: 3.679 ms
+[flash attention]: 128.233 ms
+[flash attention v2]: 103.961 ms
+[flash attention v1 tensorcore]: 16.004 ms
+[flash attention v2 cutlass]: 0.221 ms
+```
 ### A10
 在batch_size=16、head_num=16、head_dim=64不变的情况下，使用bench.py对不同seq_len的测试结果如下：<br>
-![Time Comparison Plot](minimal_flash_attn/images/time_compare.jpg)<br>
+![Time Comparison Plot](images/time_compare.jpg)<br>
 | seq_len | manual_attention| flash_attention | flash_attention_v2 |
 |---------|-----------------|----------------|--------------------|
 | 64     | 0.083ms           | 1.194ms         | 1.703ms             |
