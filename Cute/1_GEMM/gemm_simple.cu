@@ -18,6 +18,35 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
     // Tile 级别分解
     // 坐标为第四象限,这里gB的make_coord(ix, _)即为取出B tile中的一行，其shape 为(kTileN, k)
     // 或者可以记为(kTileN, kTileK, num_tile_k)
+    // 注意这里的"_" 符号为切分第ix 行，然后以KtileM和KtileK为小矩阵shape，重复按照这个shape切分多个，获得num_tile_k个tile
+    /*
+    exmaple:
+        tensor A layout:
+            ptr[16b](0x56237c284640) o (4,8):(8,1):
+                0.00    1.00    2.00    3.00    4.00    5.00    6.00    7.00
+                8.00    9.00   10.00   11.00   12.00   13.00   14.00   15.00
+                16.00   17.00   18.00   19.00   20.00   21.00   22.00   23.00
+                24.00   25.00   26.00   27.00   28.00   29.00   30.00   31.00
+
+        local_tile(A, make_tile(2,2),make_coord(0,0)):
+            ptr[16b](0x56237c284640) o (2,2):(8,1):
+                0.00    1.00
+                8.00    9.00
+        
+        local_tile(A, make_tile(2,2),make_coord(0,_));
+            ptr[16b](0x56237c284640) o (2,2,4):(8,1,2):
+                0.00    1.00
+                8.00    9.00
+            ----------
+                2.00    3.00
+                10.00   11.00
+            ----------
+                4.00    5.00
+                12.00   13.00
+            ----------
+                6.00    7.00
+                14.00   15.00
+    */
     Tensor gA = local_tile(A, make_tile(Int<kTileM>{}, Int<kTileK>{}), make_coord(iy, _));
     Tensor gB = local_tile(B, make_tile(Int<kTileN>{}, Int<kTileK>{}), make_coord(ix, _));
     Tensor gC = local_tile(C, make_tile(Int<kTileM>{}, Int<kTileN>{}), make_coord(iy, ix));
@@ -28,7 +57,7 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
 
     TiledMMA tiled_mma;
     auto thr_mma = tiled_mma.get_slice(threadIdx.x);
-    auto tAgA = thr_mma.partition_A(gA);    //(MMA, MMA_M, MMA_K)
+    auto tAgA = thr_mma.partition_A(                        );    //(MMA, MMA_M, MMA_K)
     auto tBgB = thr_mma.partition_B(gB);    //(MMA, MMA_N, MMA_K)
     auto tCgC = thr_mma.partition_C(gC);    //(MMA, MMA_M, MMA_N)
 
