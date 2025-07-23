@@ -57,7 +57,7 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
 
     TiledMMA tiled_mma;
     auto thr_mma = tiled_mma.get_slice(threadIdx.x);
-    auto tAgA = thr_mma.partition_A(                        );    //(MMA, MMA_M, MMA_K)
+    auto tAgA = thr_mma.partition_A(gA);    //(MMA, MMA_M, MMA_K)
     auto tBgB = thr_mma.partition_B(gB);    //(MMA, MMA_N, MMA_K)
     auto tCgC = thr_mma.partition_C(gC);    //(MMA, MMA_M, MMA_N)
 
