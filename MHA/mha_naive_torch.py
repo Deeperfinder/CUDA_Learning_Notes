@@ -33,11 +33,13 @@ class MultiHeadAttention(nn.Module):
         """
             SPDA attn
         """
+        # (b, h, s, h_d) * (b, h, hd, s) ==> (b, h, s, s) 
         d_k = q.size(-1)
         attn_score = torch.matmul(q, k.transpose(-2,-1)) / math.sqrt(d_k)
         if mask is not None:
             attn_score = attn_score.mask_fill(mask,float("-inf"))
         attn = F.softmax(attn_score, dim=-1)
+        # (b,h,s,s)*(b,h,s,h_d)
         out = torch.matmul(attn, v)
         return out, attn
     
