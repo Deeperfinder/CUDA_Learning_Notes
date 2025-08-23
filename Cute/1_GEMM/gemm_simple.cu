@@ -2,6 +2,9 @@
 #include <cublas_v2.h>
 #include <cuda.h>
 #include <stdlib.h>
+#include <iostream>
+#include <cstdlib> // For std::atoi
+#include <vector>
 
 template<typename T>
 void gen_rand_data(T *data, int n);
@@ -47,9 +50,9 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
                 6.00    7.00
                 14.00   15.00
     */
-    Tensor gA = local_tile(A, make_tile(Int<kTileM>{}, Int<kTileK>{}), make_coord(iy, _));
-    Tensor gB = local_tile(B, make_tile(Int<kTileN>{}, Int<kTileK>{}), make_coord(ix, _));
-    Tensor gC = local_tile(C, make_tile(Int<kTileM>{}, Int<kTileN>{}), make_coord(iy, ix));
+    Tensor gA = local_tile(A, make_tile(Int<kTileM>{}, Int<kTileK>{}), make_coord(iy, _)); //(BM,BK,Num_tilek)
+    Tensor gB = local_tile(B, make_tile(Int<kTileN>{}, Int<kTileK>{}), make_coord(ix, _)); //(BN,BK,Num_tilek)
+    Tensor gC = local_tile(C, make_tile(Int<kTileM>{}, Int<kTileN>{}), make_coord(iy, ix)); // (BM,BN)
 
     // thread级别分解
     // MMA: TiledMMA一次能做的矩阵运算所需要的数据
@@ -78,28 +81,32 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
     }
     cute::copy(tCrC, tCgC);
 }
+//gemm_simple<T, kTileM, kTileN, kTileK, MMA><<<grid, block>>>(Cptr, Aptr, Bptr, m, n, k);
+template<typename T, int KTileM, int KTileN, int KTileK, typename TiledMMA>    
+void launch_hgemm_simple_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
+    dim3 block(size(TiledMMA{}));
+    dim3 grid(n / KTileN, m / KTileM);
+    gemm_simple<T, KTileM, KTileN, KTileK, TiledMMA><<<grid, block>>>(Cptr, Aptr, Bptr, m, n, k);
+}
 
-int main(){
-    srand(10086);
-    // 初始化数据结构
-    using namespace cute;
-    using T = half_t;
+template<typename T>
+float perf_gemm_swizzle(void (*gpu_hgemm)(T*, T*, T*, int, int, int),
+                  int m, int n, int k, int inner_repeat, int warm_up = 2){
+    // 初始化data
+    // 传入指针以便修改Aptr的内存地址
 
     T *Cptr;
     T *Aptr;
     T *Bptr;
 
-    int m = 81920;
-    int n = 256;
-    int k = 256;
-    // 传入指针以便修改Aptr的内存地址
-    cudaMalloc(&Aptr, sizeof(T) * m * k);
-    cudaMalloc(&Bptr, sizeof(T) * n * k);
-    cudaMalloc(&Cptr, sizeof(T) * m * n);
-
     T *Cptr_host;
     T *Aptr_host;
     T *Bptr_host;
+    // 这里也可以使用cudaMalloc直接赋值
+    // cudaMalloc(&Cptr, size_a);
+    cudaMalloc(&Aptr, sizeof(T) * m * k);
+    cudaMalloc(&Bptr, sizeof(T) * n * k);
+    cudaMalloc(&Cptr, sizeof(T) * m * n);
 
     Aptr_host = (T*)malloc(sizeof(T) * m * k);
     Bptr_host = (T*)malloc(sizeof(T) * n * k);
@@ -109,7 +116,70 @@ int main(){
     gen_rand_data(Bptr_host, n*k);
 
     cudaMemcpy(Aptr, Aptr_host, sizeof(T) * m * k, cudaMemcpyHostToDevice);
-    cudaMemcpy(Bptr, Bptr_host, sizeof(T) * n * k, cudaMemcpyHostToDevice);
+    cudaMemcpy(Bptr, Bptr_host, sizeof(T) * n * k, cudaMemcpyHostToDevice); 
+
+    // warmup
+    for(int i=0; i < warm_up; i++){
+        gpu_hgemm(Cptr, Aptr, Bptr, m, n, k);
+    }
+    cudaDeviceSynchronize();
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    for(int i =0; i < inner_repeat; i++){
+        gpu_hgemm(Cptr, Aptr, Bptr, m, n, k);
+    }
+    cudaEventRecord(stop);
+    cudaDeviceSynchronize();
+    cudaEventSynchronize(stop);
+    
+    float msec, sec;
+    cudaEventElapsedTime(&msec, start, stop);
+    sec = msec / 1000.0 / inner_repeat;
+
+    cudaFree(Aptr);
+    cudaFree(Bptr);
+    cudaFree(Cptr);
+    free(Aptr_host);
+    free(Bptr_host);
+    free(Cptr_host);
+    
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    return sec;
+}
+
+int main(int argc, char *argv[]){
+    // 基础设置
+    srand(10086);
+    using namespace cute;
+    using T = half_t;
+
+    // 设置默认的矩阵大小
+    int m = 5120;
+    int n = 5120;
+    int k = 5120;
+
+    // 检查并解析命令行参数
+    if (argc > 1) {
+        m = std::atoi(argv[1]);
+    }
+    if (argc > 2) {
+        n = std::atoi(argv[2]);
+    }
+    if (argc > 3) {
+        k = std::atoi(argv[3]);
+    }
+    
+    // 打印最终的矩阵大小以供确认
+    std::cout << "Using matrix dimensions: M=" << m << ", N=" << n << ", K=" << k << std::endl;
+
+    // 定义重复次数
+    int outer_repeat = 10, inner_repeat = 10;
+    double max_sec = 0.0;
+    double min_sec = __DBL_MAX__;
+    double total_sec = 0.0;
 
     // 定义了一个Tensor core矩阵乘加操作类型，
     // 16 * 8 * 16（MNK）：-M=16, -K=16, -N=8
@@ -126,67 +196,96 @@ int main(){
     constexpr int kTileM = 128;
     constexpr int kTileN = 128;
     constexpr int kTileK = 32;
-    
+    // printf("MMA: %i\n", static_cast<int>(size(MMA{})));
     // (128, 1, 1)
-    dim3 block(size(MMA{}));
-    dim3 grid(n / kTileN, m / kTileM);
-    for(int i=0; i < 5; ++i){
-        gemm_simple<T, kTileM, kTileN, kTileK, MMA><<<grid, block>>>(Cptr, Aptr, Bptr, m, n, k);
+
+    for(int i=0; i < outer_repeat; ++i){
+        double this_sec = perf_gemm_swizzle<T>(launch_hgemm_simple_cute_wrapper<T,kTileM,kTileN,kTileK, MMA>, m,n,k, inner_repeat);
+        max_sec = max(max_sec, this_sec);
+        min_sec = min(min_sec, this_sec);
+        total_sec += this_sec;
     }
+    double avg_sec = total_sec / outer_repeat;
+    double avg_Tflops = ((double)m) * n * k * 2 * 1e-12 / avg_sec;
+    double achieveUsage = avg_Tflops / 125.0;
+    printf("[log] M N K = %6d %6d %6d , \n", m, n, k);
+    printf("[log] min_time = %12.8lf s , avg_time = %12.8lf, max_time =  %12.8lf s, \n", min_sec, avg_sec, max_sec);
+    printf("[log Cute] HardWare Peak BF16 Performance = %d Tflops,  AVG Performance = %3.4lf Tflops, achieve usage = %f \n", 125, avg_Tflops, achieveUsage);
+
+
     cudaDeviceSynchronize();
     auto err = cudaGetLastError();
     printf("err = %d, str = %s \n", err, cudaGetErrorString(err));
 
-    // cublas
+    //  cublas
     T *Cptr_cublas;
     cudaMalloc(&Cptr_cublas, sizeof(T) *m *n);
+    T *Aptr;
+    T *Bptr;
+    cudaMalloc(&Aptr, sizeof(T) * m * k);
+    cudaMalloc(&Bptr, sizeof(T) * n * k);
     cublasHandle_t handle;
     cublasCreate(&handle);
     half alpha = half(1.f);
     half beta = half(0.f);
-    for (int i = 0; i < 5; ++i) {
-        cublasStatus_t ret = cublasHgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                n, m, k,
-                &alpha,
-                (half *)Bptr, k,
-                (half *)Aptr, k,
-                &beta,
-                (half *)Cptr_cublas, n);
-        if (ret != CUBLAS_STATUS_SUCCESS) {
-        printf("blas err = %d, str = %s\n", ret, cublasGetStatusString(ret));
-        }
+    cudaEvent_t start, end;
+    cudaEventCreate(&start);
+    cudaEventCreate(&end);
+    cudaEventRecord(start);
+    // warm up
+    cublasStatus_t ret = cublasHgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                                        n, m, k,
+                                        &alpha,
+                                        (half *)Bptr, k,
+                                        (half *)Aptr, k,
+                                        &beta,
+                                        (half *)Cptr_cublas, n);
+    for (int i = 0; i < 500; ++i) {
+         cublasStatus_t ret = cublasHgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                                            n, m, k,
+                                            &alpha,
+                                            (half *)Bptr, k,
+                                            (half *)Aptr, k,
+                                            &beta,
+                                            (half *)Cptr_cublas, n);
+        // if (ret != CUBLAS_STATUS_SUCCESS) {
+        // printf("blas err = %d, str = %s\n", ret, cublasGetStatusString(ret));
+        // }
     }
+    cudaEventRecord(end);
     cudaDeviceSynchronize();
-    err = cudaGetLastError();
-    printf("err = %d, str = %s\n", err, cudaGetErrorString(err));
+    cudaEventSynchronize(end);
+
+    float msec, sec;
+    cudaEventElapsedTime(&msec, start, end);
+    sec = msec / 1000.0 / 500;
+    double cublas_Tflops = (2.0 * m * n * k) * 1e-12 / sec;
+    double cublas_AchieveUsage = (double)cublas_Tflops / 125.0;
+    printf("[log cublas] HardWare Peak BF16 Performance = %d Tflops,  AVG Performance = %3.4lf Tflops, achieve usage = %f \n", 125, cublas_Tflops, cublas_AchieveUsage);
     
-    T *Cptr_cublas_host;
-    Cptr_cublas_host = (T*)malloc(sizeof(T) * m * n);
+    cudaFree(Aptr);
+    cudaFree(Bptr);
+    cudaFree(Cptr_cublas);
+    // cudaDeviceSynchronize();
+    // err = cudaGetLastError();
+    // printf("err = %d, str = %s\n", err, cudaGetErrorString(err));
+    
+    // T *Cptr_cublas_host;
+    // Cptr_cublas_host = (T*)malloc(sizeof(T) * m * n);
 
-    //compare 
-    cudaMemcpy(Cptr_host, Cptr, sizeof(T) *m * n, cudaMemcpyDeviceToHost);
-    cudaMemcpy(Cptr_cublas_host, Cptr_cublas, sizeof(T)*m*n, cudaMemcpyDeviceToHost);
+    // //compare 
+    // cudaMemcpy(Cptr_host, Cptr, sizeof(T) *m * n, cudaMemcpyDeviceToHost);
+    // cudaMemcpy(Cptr_cublas_host, Cptr_cublas, sizeof(T)*m*n, cudaMemcpyDeviceToHost);
 
     
-    float threshold = 0.1;
-    for (int i = 0; i < m * n; ++i) {
-        float v1 = Cptr_host[i];
-        float v2 = Cptr_cublas_host[i];
-        if (fabs(v2 - v1) > threshold) {
-        printf("v1 = %f, v2 = %f\n", v1, v2);
-        }
-    }
-
-    Tensor tensor_C = make_tensor(Cptr_host, make_shape(m, n), make_stride(n, 1));
-    Tensor tensor_C_cublas = make_tensor(Cptr_cublas_host, make_shape(m, n), make_stride(n, 1));
-
-    auto tile = make_tile(8, 8);
-    auto coor = make_coord(0, 0);
-    Tensor tc1 = local_tile(tensor_C, tile, coor);
-    Tensor tc1_cublas = local_tile(tensor_C_cublas, tile, coor);
-
-    print_tensor(tc1);
-    print_tensor(tc1_cublas);
+    // float threshold = 0.1;
+    // for (int i = 0; i < m * n; ++i) {
+    //     float v1 = Cptr_host[i];
+    //     float v2 = Cptr_cublas_host[i];
+    //     if (fabs(v2 - v1) > threshold) {
+    //     printf("v1 = %f, v2 = %f\n", v1, v2);
+    //     }
+    // }
 }
 template<typename T>
 void gen_rand_data(T *data, int n){
