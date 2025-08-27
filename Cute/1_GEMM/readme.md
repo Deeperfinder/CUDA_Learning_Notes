@@ -50,8 +50,13 @@
 # culbas
 [log cublas] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 249.5714 Tflops, achieve usage = 0.799908
 ```
+<<<<<<< HEAD
 模拟DeepSeek v3的O proj gemm操作，即：
 M N K =   8192 16384 7168， 达成硬件利用率如下所示：
+=======
+模拟DeepSeek v3的Q proj gemm操作，即：
+M N K =   8192   7168  16384， 达成硬件利用率如下所示：
+>>>>>>> e6bae7a (update readme.md with A100 gemm data)
 ```bash
 # single-stage
 [log Cute] HardWare Peak BF16 Performance = 125 Tflops,  AVG Performance = 18.6591 Tflops, achieve usage = 0.149272 
@@ -59,7 +64,24 @@ M N K =   8192 16384 7168， 达成硬件利用率如下所示：
 [log cublas] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 291.1039 Tflops, achieve usage = 0.933025
 # multi-stage
 [log Cute] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 195.8124 Tflops, achieve usage = 0.627604 
+<<<<<<< HEAD
 
+=======
+```
+### A10
+```bash
+# single-stage
+[log] M N K =   5120   5120   5120 , 
+[log] min_time =   0.10398892 s , avg_time =   0.10399853, max_time =    0.10400862 s, 
+[log Cute] HardWare Peak BF16 Performance = 125 Tflops,  """AVG Performance = 2.5811 Tflops""", achieve usage = 0.020649 
+err = 0, str = no error 
+[log cublas] HardWare Peak BF16 Performance = 125 Tflops,  """AVG Performance = 19.6775 Tflops""", achieve usage = 0.157420 
+# multi-stage
+[log] M N K =   5120   5120   5120 , 
+[log] min_time =   0.01333841 s , avg_time =   0.01334013, max_time =    0.01334177 s, 
+[log Cute] HardWare Peak BF16 Performance = 125 Tflops,  """AVG Performance = 20.1224 Tflops""", achieve usage = 0.160979 
+```
+>>>>>>> e6bae7a (update readme.md with A100 gemm data)
 ## gemm-simple
 __A100__ ： 
 gemm-simple 对比cublas实现：
