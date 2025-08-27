@@ -1,3 +1,10 @@
+# my cute notes
+## GEMM
+
+[GEMM详细介绍](./1_GEMM/readme.md)
+
+
+
 ## print mma 流程
 ```bash
 # nvcc 编译
