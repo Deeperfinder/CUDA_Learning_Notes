@@ -323,6 +323,19 @@ struct GemmConfig {
       cute::max(shm_size_AB, shm_size_C) * sizeof(T);
 };
 
+template<typename ConfigT, typename T>     
+void launch_hgemm_multi_stage_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int M, int N, int K) {
+    // 使用 '::' 访问静态成员
+    dim3 block(ConfigT::kThreadNum);
+    dim3 grid((N + ConfigT::kTileN - 1) / ConfigT::kTileN,
+              (M + ConfigT::kTileM - 1) / ConfigT::kTileM);
+    
+    cudaFuncSetAttribute(gemm_multi_stage<ConfigT>,
+                         cudaFuncAttributeMaxDynamicSharedMemorySize, ConfigT::kShmSize);
+                         
+    gemm_multi_stage<ConfigT><<<grid, block, ConfigT::kShmSize>>>(Cptr, Aptr, Bptr, M, N, K);
+}
+
 }  // namespace config
 
 int main(int argc, char *argv[]) {
@@ -430,6 +443,24 @@ int main(int argc, char *argv[]) {
     gemm_multi_stage<decltype(gemm_config)>
         <<<grid, block, shm_size>>>(Dptr, Aptr, Bptr, M, N, K);
   }
+  // test Tflops
+  int outer_repeat = 10;
+  int inner_repeat = 5;
+  double max_sec = 0.0;
+  double min_sec = __DBL_MAX__;
+  double total_sec = 0.0;
+  for(int i=0; i < outer_repeat; ++i){
+      double this_sec = perf_gemm_swizzle<T>(launch_hgemm_multi_stage_cute_wrapper<MyGemmConfig, T>, M,N,K, inner_repeat);
+      max_sec = max(max_sec, this_sec);
+      min_sec = min(min_sec, this_sec);
+      total_sec += this_sec;
+  }
+  double avg_sec = total_sec / outer_repeat;
+  double avg_Tflops = ((double)M) * N * K * 2 * 1e-12 / avg_sec;
+  double achieveUsage = avg_Tflops / 125.0;
+  printf("[log] M N K = %6d %6d %6d , \n", M, N, K);
+  printf("[log] min_time = %12.8lf s , avg_time = %12.8lf, max_time =  %12.8lf s, \n", min_sec, avg_sec, max_sec);
+  printf("[log Cute] HardWare Peak BF16 Performance = %d Tflops,  AVG Performance = %3.4lf Tflops, achieve usage = %f \n", 125, avg_Tflops, achieveUsage);
 
   cudaMemcpy(Dptr_host, Dptr, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
   cudaMemcpy(Dptr_host_blas, Dptr_cublas, sizeof(T) * M * N,
