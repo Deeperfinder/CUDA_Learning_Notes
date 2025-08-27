@@ -7,7 +7,11 @@
 
 #include "detail/cublaslt-gemm.h"
 #include "detail/data.h"
+<<<<<<< HEAD
 #include "utils.h"
+=======
+#include "gemm_utils.h"
+>>>>>>> c47d262 ([feature] add TFlops func)
 
 template <typename Config>
 __global__ void /* __launch_bounds__(128, 1) */
@@ -316,6 +320,7 @@ struct GemmConfig {
                                make_layout(make_shape(Int<1>{}, Int<8>{}))));
 
   static constexpr int kThreadNum = size(MMA{});
+  // 这个cute::cosize api是返回总元素的数量
   static constexpr int shm_size_AB =
       cute::cosize(SmemLayoutA{}) + cute::cosize(SmemLayoutB{});
   static constexpr int shm_size_C = cute::cosize(SmemLayoutC{});
@@ -339,6 +344,19 @@ void launch_hgemm_multi_stage_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int M, int
 
 }  // namespace config
 
+template<typename ConfigT, typename T>     
+void launch_hgemm_multi_stage_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int M, int N, int K) {
+    // 使用 '::' 访问静态成员
+    dim3 block(ConfigT::kThreadNum);
+    dim3 grid((N + ConfigT::kTileN - 1) / ConfigT::kTileN,
+              (M + ConfigT::kTileM - 1) / ConfigT::kTileM);
+    
+    cudaFuncSetAttribute(gemm_multi_stage<ConfigT>,
+                         cudaFuncAttributeMaxDynamicSharedMemorySize, ConfigT::kShmSize);
+                         
+    gemm_multi_stage<ConfigT><<<grid, block, ConfigT::kShmSize>>>(Cptr, Aptr, Bptr, M, N, K);
+}
+
 int main(int argc, char *argv[]) {
   using T = cute::half_t;
   using namespace cute;
@@ -353,9 +371,9 @@ int main(int argc, char *argv[]) {
   printf("cuBLAS version: %d\n", cublas_version);
 
   // default;
-  int M = 81920;
-  int N = 256;
-  int K = 256;
+  int M = 5120;
+  int N = 5120;
+  int K = 5120;
 
   int enable_cpu = 0;
   int enable_cublaslt = 1;
@@ -411,6 +429,7 @@ int main(int argc, char *argv[]) {
   }
 
   config::GemmConfig<T, 128, 128, 32, 3> gemm_config;
+  using MyGemmConfig = config::GemmConfig<T, 128, 128, 32, 3>;
 
   print(typename decltype(gemm_config)::MMA{});
 
@@ -456,12 +475,21 @@ int main(int argc, char *argv[]) {
       min_sec = min(min_sec, this_sec);
       total_sec += this_sec;
   }
+<<<<<<< HEAD
   double avg_sec = total_sec / outer_repeat;
   double avg_Tflops = ((double)M) * N * K * 2 * 1e-12 / avg_sec;
   double achieveUsage = avg_Tflops / 125.0;
   printf("[log] M N K = %6d %6d %6d , \n", M, N, K);
   printf("[log] min_time = %12.8lf s , avg_time = %12.8lf, max_time =  %12.8lf s, \n", min_sec, avg_sec, max_sec);
   printf("[log Cute] HardWare Peak BF16 Performance = %d Tflops,  AVG Performance = %3.4lf Tflops, achieve usage = %f \n", 125, avg_Tflops, achieveUsage);
+=======
+    double avg_sec = total_sec / outer_repeat;
+    double avg_Tflops = ((double)M) * N * K * 2 * 1e-12 / avg_sec;
+    double achieveUsage = avg_Tflops / 125.0;
+    printf("[log] M N K = %6d %6d %6d , \n", M, N, K);
+    printf("[log] min_time = %12.8lf s , avg_time = %12.8lf, max_time =  %12.8lf s, \n", min_sec, avg_sec, max_sec);
+    printf("[log Cute] HardWare Peak BF16 Performance = %d Tflops,  AVG Performance = %3.4lf Tflops, achieve usage = %f \n", 125, avg_Tflops, achieveUsage);
+>>>>>>> c47d262 ([feature] add TFlops func)
 
   cudaMemcpy(Dptr_host, Dptr, sizeof(T) * M * N, cudaMemcpyDeviceToHost);
   cudaMemcpy(Dptr_host_blas, Dptr_cublas, sizeof(T) * M * N,

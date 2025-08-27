@@ -8,6 +8,10 @@
 #include "utils.h"
 
 
+<<<<<<< HEAD
+=======
+#include "gemm_utils.h"
+>>>>>>> c47d262 ([feature] add TFlops func)
 
 template<typename T, int kTileM, int kTileN, int kTileK, typename TiledMMA>
 __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
@@ -50,6 +54,7 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
                 6.00    7.00
                 14.00   15.00
     */
+    // 128 x 128 x 32
     Tensor gA = local_tile(A, make_tile(Int<kTileM>{}, Int<kTileK>{}), make_coord(iy, _)); //(BM,BK,Num_tilek)
     Tensor gB = local_tile(B, make_tile(Int<kTileN>{}, Int<kTileK>{}), make_coord(ix, _)); //(BN,BK,Num_tilek)
     Tensor gC = local_tile(C, make_tile(Int<kTileM>{}, Int<kTileN>{}), make_coord(iy, ix)); // (BM,BN)
@@ -81,7 +86,7 @@ __global__ void gemm_simple(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
     }
     cute::copy(tCrC, tCgC);
 }
-//gemm_simple<T, kTileM, kTileN, kTileK, MMA><<<grid, block>>>(Cptr, Aptr, Bptr, m, n, k);
+
 template<typename T, int KTileM, int KTileN, int KTileK, typename TiledMMA>    
 void launch_hgemm_simple_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int m, int n, int k){
     dim3 block(size(TiledMMA{}));
@@ -89,7 +94,10 @@ void launch_hgemm_simple_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int m, int n, i
     gemm_simple<T, KTileM, KTileN, KTileK, TiledMMA><<<grid, block>>>(Cptr, Aptr, Bptr, m, n, k);
 }
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> c47d262 ([feature] add TFlops func)
 int main(int argc, char *argv[]){
     // 基础设置
     srand(10086);
