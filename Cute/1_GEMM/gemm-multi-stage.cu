@@ -7,6 +7,7 @@
 
 #include "detail/cublaslt-gemm.h"
 #include "detail/data.h"
+#include "utils.h"
 
 template <typename Config>
 __global__ void /* __launch_bounds__(128, 1) */
