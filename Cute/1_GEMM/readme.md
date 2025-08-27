@@ -39,9 +39,30 @@
 
 这将执行 GEMM 运算并输出结果。
 
+## TFLOPS
+### A100
+使用M=5120, N=5120, K=5120进行测试，结果如下所示：
+```bash
+# single-stage
+[log Cute] HardWare Peak BF16 Performance = 125 Tflops,  AVG Performance = 17.2476 Tflops, achieve usage = 0.137981 
+# multi-stage
+[log Cute] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 230.2785 Tflops, achieve usage = 0.738072 
+# culbas
+[log cublas] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 249.5714 Tflops, achieve usage = 0.799908
+```
+模拟DeepSeek v3的O proj gemm操作，即：
+M N K =   8192 16384 7168， 达成硬件利用率如下所示：
+```bash
+# single-stage
+[log Cute] HardWare Peak BF16 Performance = 125 Tflops,  AVG Performance = 18.6591 Tflops, achieve usage = 0.149272 
+# culbas
+[log cublas] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 291.1039 Tflops, achieve usage = 0.933025
+# multi-stage
+[log Cute] HardWare Peak BF16 Performance = 312 Tflops,  AVG Performance = 195.8124 Tflops, achieve usage = 0.627604 
 
 ## gemm-simple
-__A100__ ： gemm-simple 对比cublas实现：
+__A100__ ： 
+gemm-simple 对比cublas实现：
 ![alt text](./pic/compare.jpg)
 
 
