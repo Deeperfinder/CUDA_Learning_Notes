@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from torch.utils.cpp_extension import load
+from flash_attn import flash_attn_func
 # """
 # 这行代码是整个魔法的起点。让我们分解 load 函数的作用：
 
@@ -96,6 +97,41 @@ def bench(fn, num_warmups: int = 20, num_tests: int = 30, post_fn=None):
 
     times = np.array([s.elapsed_time(e) / 1e3 for s, e in zip(start_events, end_events)])[1:]
     return np.average(times), np.min(times), np.max(times)
+
+def official_attn(q, k, v):
+    """
+    调用 FlashAttention 官方实现（FlashAttention-2 推荐函数）
+    
+    参数:
+        q: (batch_size, seqlen, num_heads_q, head_dim)
+        k: (batch_size, seqlen_k, num_heads_kv, head_dim)
+        v: (batch_size, seqlen_k, num_heads_kv, head_dim)
+
+    返回:
+        out: (batch_size, seqlen, num_heads_q, head_dim)
+    """
+    # 设置参数（你可以根据需要修改）
+    dropout_p = 0.0        # 通常 benchmark 关闭 dropout
+    causal = False         # 是否启用 causal attention
+    window_size = (-1, -1) # 不使用局部窗口
+    softcap = None         # 无 soft cap
+    alibi_slopes = None    # 不使用 ALiBi
+    deterministic = False  # 可设为 True 保证数值可复现
+
+    # 直接调用官方 FlashAttention 函数（支持 GQA/MQA）
+    # 自动处理 head 数量不一致（如 GQA）
+    out = flash_attn_func(
+        q, k, v,
+        dropout_p=dropout_p,
+        causal=causal,
+        window_size=window_size,
+        # softcap=softcap,
+        alibi_slopes=alibi_slopes,
+        deterministic=deterministic,
+        return_attn_probs=False  # benchmark 时只关心输出和速度
+    )
+    return out
+
 def run_without_profiling(q, k, v):
     # used for ncu profiling
     for _ in range(3):
@@ -108,29 +144,7 @@ def run_without_profiling(q, k, v):
     # Compare results
     # print('flash attn1 values sanity check:', torch.allclose(minimal_result, manual_result, rtol=0, atol=1e-02))
     # print('flash attn2 values sanity check:', torch.allclose(fa2_minimal_res, manual_result, rtol=0, atol=1e-02))
-def run_with_timing(q, k, v):
-    # import time
-    # print('=== timing manual attention ===')
-    # start = time.time()
-    # manual_result = manual_attn(q, k, v)
-    # # Convert to milliseconds by multiplying by 1000
-    # print(f"manual attention time: {(time.time() - start) * 1000:.4f} ms")
-    # torch.cuda.synchronize()
-
-
-    # print('=== timing minimal flash attention ===')
-    # start = time.time()
-    # minimal_result = minimal_attn.forward(q, k, v)
-    # # Convert to milliseconds by multiplying by 1000
-    # print(f"minimal flash attention time: {(time.time() - start) * 1000:.4f} ms")
-    # torch.cuda.synchronize()
-
-    # print('=== timing minimal flash attention V2 ===')
-    # start = time.time()
-    # fa2_minimal_res = minimal_attn.forward_V2(q, k, v)
-    # # Convert to milliseconds by multiplying by 1000
-    # print(f"minimal flash attention V2 time: {(time.time() - start) * 1000:.4f} ms")
-    # torch.cuda.synchronize()
+def run_with_timing(q, k, v, q_h, k_h, v_h):
     # # Compare results
     # print('flash attn1 values sanity check:', torch.allclose(minimal_result, manual_result, rtol=0, atol=1e-02))
     # print('flash attn2 values sanity check:', torch.allclose(fa2_minimal_res, manual_result, rtol=0, atol=1e-02))
@@ -142,27 +156,36 @@ def run_with_timing(q, k, v):
     flash_v2_avg_time = bench(lambda: minimal_attn.forward_V2(q, k, v))[0]
     flash_v1_tensorcore_time = bench(lambda: minimal_attn.forward_v1_tensorcore(q, k, v, True))[0]
     flash_v2_cutlass_time = bench(lambda: minimal_attn.forward_v2_cutlass(q, k, v))[0]
+    # ✅ 添加官方 FlashAttention
+    official_avg_time = bench(lambda: official_attn(q_h, k_h, v_h))[0]
+
     print("[manual attention]: %.3f ms" % (manual_avg_time * 1000))
     print("[flash attention]: %.3f ms" % (flash_avg_time * 1000))
     print("[flash attention v2]: %.3f ms" % (flash_v2_avg_time * 1000))
     print("[flash attention v1 tensorcore]: %.3f ms" % (flash_v1_tensorcore_time * 1000))
     print("[flash attention v2 cutlass]: %.3f ms" % (flash_v2_cutlass_time * 1000))
+    print("[OFFICIAL flash attn]: %.3f ms" % (official_avg_time * 1000))
+
 def main(args):
     # Use small model params, otherwise slower than manual attention. See caveats in README.
     batch_size = 16
-    n_head =16
-    seq_len = 512
+    n_head =32
+    seq_len = 1024
     head_embd = 64
 
     q = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
     k = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
     v = torch.randn(batch_size, n_head, seq_len, head_embd).cuda()
 
+    q_h = torch.randn(batch_size, n_head, seq_len, head_embd, dtype=torch.float16).cuda()
+    k_h = torch.randn(batch_size, n_head, seq_len, head_embd, dtype=torch.float16).cuda()
+    v_h = torch.randn(batch_size, n_head, seq_len, head_embd, dtype=torch.float16).cuda()
+
     if args.prof:
-        run_with_profiling(q, k, v)
+        run_with_profiling(q, k, v, q_h, k_h, v_h)
     else:
         # run_without_profiling(q, k, v)
-        run_with_timing(q, k, v)
+        run_with_timing(q, k, v, q_h, k_h, v_h)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run attention benchmark with or without profiling.")
