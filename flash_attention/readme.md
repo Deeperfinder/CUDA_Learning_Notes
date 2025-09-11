@@ -4,6 +4,34 @@
 
 # minimal_flash_attn
 ## 性能测试
+| update: 2025-09-01
+| GPU: A10
+添加了官方的FlashAttention实现，测试结果如下：
+
+```bash
+---------------------------------------------------------------
+b=16, n_head=16, seq_len=512 , head_embed=64
+[manual attention]: 5.589 ms
+[flash attention]: 745.013 ms
+[flash attention v2]: 585.282 ms
+[flash attention v1 tensorcore]: 74.579 ms
+[flash attention v2 cutlass]: 0.999 ms
+[OFFICIAL flash attn]: 2.420 ms
+
+b=16, n_head=32 seq_len=1024 , head_embed=64
+[manual attention]: 43.548 ms
+[flash attention]: 4633.219 ms
+[flash attention v2]: 4622.166 ms
+[flash attention v1 tensorcore]: 607.968 ms
+[flash attention v2 cutlass]: 7.543 ms
+[OFFICIAL flash attn]: 4.867 ms
+---------------------------------------------------------------
+```
+
+
+
+| old message
+---------------------------------------------------------------
 ```bash
 seq_len=512, batch_size=16, head_num=16, head_dim=64
 [manual attention]: 3.679 ms
