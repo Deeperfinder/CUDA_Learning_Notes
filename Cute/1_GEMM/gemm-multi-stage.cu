@@ -7,11 +7,7 @@
 
 #include "detail/cublaslt-gemm.h"
 #include "detail/data.h"
-<<<<<<< HEAD
-#include "utils.h"
-=======
 #include "gemm_utils.h"
->>>>>>> c47d262 ([feature] add TFlops func)
 
 template <typename Config>
 __global__ void /* __launch_bounds__(128, 1) */

@@ -8,7 +8,7 @@
 ## print mma 流程
 ```bash
 # nvcc 编译
-nvcc mma.cu -o print_mma
+nvcc mma.cu -o print_mma -I ../../HGEMM/third-party/cutlass/include/
 
 # 获取tex输出
 ./print_mma > mma.tex
