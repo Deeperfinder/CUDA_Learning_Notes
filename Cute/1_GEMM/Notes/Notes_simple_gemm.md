@@ -7,7 +7,7 @@ NVCC 提供了wmma(warp matrix multiply accumulate)和 mma(matrix multiply accum
     * wmma: 提供fragment数据表示， 特定的`load_matrix_sync()`、`store_matrix_sync()`,`mma_sync()`数据加载和计算API来触发对Tensor Core的编程. 对数据和API进行了相应的抽象，编程简单，指令控制相对粗糙。
     * mma：数据直接面向寄存器表示，计算通过`mma.sync()`类的函数实现，细粒度高。
 ## cute
-cute作为高性能的原语表示和抽象，基于`mma`实现，对数据和计算进行了很好的抽象的前提下，依然保留了精细控制能力。对于矩阵计算任务，cute提供了如下的抽象。![alt text](./pic/cute_abstract.png)
+cute作为高性能的原语表示和抽象，基于`mma`实现，对数据和计算进行了很好的抽象的前提下，依然保留了精细控制能力。对于矩阵计算任务，cute提供了如下的抽象。![alt text](../pic/cute_abstract.png)
 * __MMAOperation:__ MMA操作的抽象
     * 指令层的封装：代表实际的硬件MMA指令，针对不同的GPU架构，Nvidia提供不同的指令来调用TensorCore，封装了硬件指令同时提供了公共的`fma`方法，包含MMA的维度`shape(M,N,K)`, 输入输出的数据类型`(M,N,K,Accumulator)`
     ```c++
@@ -70,7 +70,7 @@ cute作为高性能的原语表示和抽象，基于`mma`实现，对数据和�
 
 ## layout
 shape = ((2,4), (3,5)), stride = ((3,6), (1,24))
-![alt text](./pic/ca848fccdaf7d35bb75260c28f97f5c0.png)
+![alt text](../pic/ca848fccdaf7d35bb75260c28f97f5c0.png)
 # 计算高效
 ### accumulator: 
 在进行一系列数值运算(如加法、乘法操作)时，用来保存中间结果的变量和寄存器。常用于：
@@ -93,14 +93,14 @@ CUTE 将这两条指令抽象成了MMA_Operation：
 
 ### 以C矩阵为中心的任务划分策略
 即一个`thread block`完成C矩阵中的一个小块(TileC)的计算任务。如下图所示：定义TileC大小为kTileM(行数目)、kTileN(列数目)，其相乘的矩阵为(kTileM, k), (kTileN, k), 在K轴上移动kTileK得到AB上的小块TileA_itile和TileB_itile，将他们相乘的积累加到TileC上，便可以得到TileC的计算结果，这种沿着k轴移动的策略称为`sliced-k`方法。
-![alt text](./pic/image-1.png)
-![alt text](./pic/image.png)
+![alt text](../pic/image-1.png)
+![alt text](../pic/image.png)
 
 ### block分块策略
 * sliced-k: 先选定TileC， 沿着K轴移动小块进行累加求和。计算效率受制于m，如果m,n很小，则有一些SM会闲置，而有一些SM会循环计算多次
-* split-k: 将k轴划分成多段，每段计算一个TileC结果，最后再通过额外的累加过程将多段的结果进行求和，这种模式的任务划分方法为split-k![alt text](./pic/image-2.png)
+* split-k: 将k轴划分成多段，每段计算一个TileC结果，最后再通过额外的累加过程将多段的结果进行求和，这种模式的任务划分方法为split-k![alt text](../pic/image-2.png)
 * stream-k: 上面两种方法都是静态的划分任务，在划分的任务数目和SM执行单元不能整除的时候，总会存在某轮(wave)计算中存在SM空闲的问题，stream-k则是抛弃了以任务为中心的划分逻辑，而是变成了以计算资源为核心的分配任务方式，使得SM的任务量基本相当
-![alt text](./pic/image-3.png)
+![alt text](../pic/image-3.png)
 
 ## TiledMMA：主机端选择指令，设备端将分块划分到线程
 前面经过把C++ pointer封装成tensor，然后利用`local_tile` 将tensor划分成小块，我们便可以得到一个thread block需要处理的任务。这时，假设我们通过前面MMA章节构造了一个TiledMMA能力，则借助其方法我们可以通过`ThrMMA`的partition_A/B/C方法实现对TileA、TileB、TileC的划分，通过`partition_fragment_A/B/C`便可以构造矩阵所需要的寄存器表示。
@@ -126,9 +126,9 @@ thr_mma = tiled_mma.get_slice(threadIdx.x): 每个线程（threadIdx.x）通过 
 * 每个bank都是可以独立寻址的存储空间，bank之间可以并行读写数据  
 shared mem包含32个bank，bank中可以寻址的基本单元为4byte。  
 当32个线程同时访问32个不同的bank时，各个bank并行执行，其效率最高，即32个线程并行的访问32个bank中不同的颜色单元。
-![alt text](./pic/bank.png)
+![alt text](../pic/bank.png)
 
-* __Bank conflict:__ 当某两个thread T0、T2要同时访问相同bank—2的不同地址的时候，这两次访问会被**排队**， 即先访问该bank的一个地址，再访问第二个地址。这两次访问在**发射任务维度**(产生访问请求指令)时间维度上是并行，但是bank在读写数据的时候是**串行**的，这就是`bank conflict`。 由于一个bank上有两次冲突，这种情况称为两路冲突(two-way conflict)![alt text](./pic/bank_conflict-2way.png)
+* __Bank conflict:__ 当某两个thread T0、T2要同时访问相同bank—2的不同地址的时候，这两次访问会被**排队**， 即先访问该bank的一个地址，再访问第二个地址。这两次访问在**发射任务维度**(产生访问请求指令)时间维度上是并行，但是bank在读写数据的时候是**串行**的，这就是`bank conflict`。 由于一个bank上有两次冲突，这种情况称为两路冲突(two-way conflict)![alt text](../pic/bank_conflict-2way.png)
 
 
 * __向量化读写:__ 在kernel优化的时候一般以`float4`进行向量化读取，此时共享内存的一次读写大小为**128bit**, 此线程需要访问的单位数据量为16 byte, 32个线程需要访问数据量为 512 byte. 完整的512 byte访问需要4个phase才能完成访问。
@@ -141,11 +141,11 @@ shared mem包含32个bank，bank中可以寻址的基本单元为4byte。
 **介绍**
 * ldmatrix以warp为单位，从shared mem中加载一个或者多个8x8矩阵到warp threads的regisger中
 * 在GEMM流水线中，矩阵数据是warp内的所有线程提供一部分寄存器共同表示的。如下图所示，每个线程提供一个寄存器V0(4byte)。这部分数据通过`ldmatrix`指令的warp level实现。针对一个8x8-half的寄存器表示的作为输出的矩阵块，ldmatrix其输入要求为8个shared memory地址，每个地址指向一个16byte共享内存中的数据，其中T0-Addr0指向的16byte数据经过ldmatrix会被分派到T0-T3的V0寄存器中。  
-* 通过`ldmatrix`指令即可完成矩阵数据从共享内存到寄存器的加载，前面的介绍我们知道共享内存是有bank结构的，并且按照16byte的形式读取，所以T0~T7读取该数据时候会被作为一个独立的Phase, 因此所有16byte 表示的8个数据必须分布在不同的bank，才能确保没有bank conflict。比如下图的布局:![alt text](./pic/ld_matrix.png)
+* 通过`ldmatrix`指令即可完成矩阵数据从共享内存到寄存器的加载，前面的介绍我们知道共享内存是有bank结构的，并且按照16byte的形式读取，所以T0~T7读取该数据时候会被作为一个独立的Phase, 因此所有16byte 表示的8个数据必须分布在不同的bank，才能确保没有bank conflict。比如下图的布局:![alt text](../pic/ld_matrix.png)
 
 ### shared mem 写入
 矩阵数据流向如下图所示：
-![alt text](./pic/shared_mem_read.png)  
+![alt text](../pic/shared_mem_read.png)  
 
 * shared mem ==> register mem:
     * 共享内存由于有bank的存在，其块状数据在共享内存存储时不是简单行列排列。需要根据ldmatrix的要求来避免冲突，这样从全局内存读取数据后写入共享内存时，也需要按照逻辑要求进行存储空间的映射。 
@@ -158,7 +158,7 @@ shared mem包含32个bank，bank中可以寻址的基本单元为4byte。
  cute中通过swizzle抽象来实现共享内存bank conflict的冲突解决。
  * swizzle的本质是函数，作用在layout上，即函数作用在函数上
  * 通过将shared memory的**数据进行重排** 来避免conflict，从下图可以看到，每一行/列的每个元素的bank值不同
- ![alt text](./pic/swizzle_data.png) 
+ ![alt text](../pic/swizzle_data.png) 
  * layout的作用是给定坐标返回**offset** ，而swizzle的作用则是给定**offset**返回**bank conflict free**的offset
  * __逻辑位置和物理位置:__
     * 逻辑位置表示元素在矩阵中的逻辑坐标
@@ -169,7 +169,7 @@ shared mem包含32个bank，bank中可以寻址的基本单元为4byte。
  2. __M:__ 一维坐标中连续的 $2^M$ 个数字构成二维空间中的**基本元素**  
  3. __S:__ 新的二维空间有多少列,    $2^S$
  如下图所示：当B=1,M=1,S=2时。对二维空间2-D(a)进行异或后得到新的二维空间2-D(b).如果一维坐标映射后超过了 $2^B$
- 大小，则超出的部分的行号从0开始记，但是offset上要加上前面的所有的元素个数。![alt text](./pic/swizzle_xor.png)
+ 大小，则超出的部分的行号从0开始记，但是offset上要加上前面的所有的元素个数。![alt text](../pic/swizzle_xor.png)
 
  **例子:**  
  假设有一块half类型，shape:(8,32), stride(32,1)的共享内存。定义Swizzle<3,3,3>作用到该shared memory layout上，形成A = Composition(Swizzle<3,3,3>, Layout<<Shape<8,32>, Stride<32,1>{}>); 则layout中有效的offset为0~256.Swizzle中M为3，所以**8个元素形成一个新的最小的元素**， 即`minimal_element = 8 x 2 = 16 byte`, Swizzle中S为3，即一行中有8个元素，则有`8 x 16 = 128 byte`。 此时128 byte为shared mem中无conflict访问所有bank的最大宽度. 异或后得到的新的列号，避免了在bank方向的冲突
