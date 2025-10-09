@@ -5,3 +5,5 @@ gemm_simple
 gemm-multi-stage
 *.nsys-rep
 __pycache__
+sm80_gemm
+sm80_gemm_mma_stage_tn_cute
