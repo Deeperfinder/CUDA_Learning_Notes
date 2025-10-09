@@ -7,3 +7,4 @@ gemm-multi-stage
 __pycache__
 sm80_gemm
 sm80_gemm_mma_stage_tn_cute
+.DS_Store
