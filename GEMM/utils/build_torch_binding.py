@@ -2,7 +2,6 @@ import os
 import torch
 from torch.utils.cpp_extension import load
 
-MAX_TFLOPS = -1
 
 
 def get_project_dir():
@@ -38,20 +37,6 @@ def get_build_cuda_cflags(build_pkg: bool = True):
     extra_cuda_cflags.append('-lcublas')
     return extra_cuda_cflags
 
-def print_gemm_result_info(TFLOPS:float,
-               out_info:str,
-               out_val:list,
-               mean_time_secs:float):
-    global MAX_TFLOPS
-    # calculate TFLOPS improved
-    if TFLOPS > MAX_TFLOPS:
-        if MAX_TFLOPS > 0:
-            improve = (TFLOPS - MAX_TFLOPS) / MAX_TFLOPS * 100
-            improve = round(improve, 2)
-        else:
-            improve = 0
-        MAX_TFLOPS = TFLOPS
-        print(f"{out_info:>53}: {out_val}, time:{mean_time_secs}ms, TFLOPS:{TFLOPS:<6.2f}(+{improve:.2f}%)")
 
 def get_build_sources():
     build_sources = []
@@ -67,9 +52,9 @@ def get_device_capability():
 def build_from_sources(verbose: bool= False):
     torch_arch_list_env = os.environ.get("TORCH_CUDA_ARCH_LIST", None)
     # Load the CUDA kernel as a python module
-    pretty_print_line(f"Loading gemm lib on device:{get_device_name()},"
-               f"capability:{get_device_capability()}",
-               f"Arch ENV:{torch_arch_list_env}")
+    pretty_print_line(f"Loading hgemm lib on device: {get_device_name()}, "
+                      f"capability: {get_device_capability()}, "
+                      f": {torch_arch_list_env}")
     
     return load(name = 'Mix_GEMM',
                 sources = get_build_sources(),  
