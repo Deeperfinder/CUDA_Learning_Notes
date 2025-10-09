@@ -5,7 +5,7 @@ from torch.utils.cpp_extension import load
 
 
 def get_project_dir():
-    return os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def get_build_cuda_cflags(build_pkg: bool = True):
     extra_cuda_cflags = []
@@ -30,10 +30,13 @@ def get_build_cuda_cflags(build_pkg: bool = True):
       extra_cuda_cflags.append("--ptxas-options=-v")
     # extra cuda flags for cute hgemm
     extra_cuda_cflags.append('-DNO_CUBLAS_HGEMM_BIN')
+    extra_cuda_cflags.append('-DNO_CUTE_HGEMM_BIN')
 
     # add cutlass and link cublas
     project_dir = get_project_dir()
-    extra_cuda_cflags.append(f"-I {project_dir}/cutlass/include")
+    print(f"project_dir : {project_dir}")
+    extra_cuda_cflags.append(f"-I {project_dir}/3rdparty/cutlass/include")
+    extra_cuda_cflags.append(f'-I {project_dir}/GEMM/utils/')
     extra_cuda_cflags.append('-lcublas')
     return extra_cuda_cflags
 
@@ -41,6 +44,9 @@ def get_build_cuda_cflags(build_pkg: bool = True):
 def get_build_sources():
     build_sources = []
     build_sources.append('naive/hgemm.cu')
+    build_sources.append('Cute/sm80_gemm_mma_stage_tn_cute.cu')
+    build_sources.append('utils/pybinding.cc')
+
     return build_sources
 
 def get_device_name():

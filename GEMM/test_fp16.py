@@ -4,13 +4,29 @@ import torch.nn
 import torch.utils
 import numpy as np
 
-from utils.build_torch_binding import (print_gemm_result_info,
-                                       try_load_gemm_library,
+from utils.build_torch_binding import (try_load_gemm_library,
                                        pretty_print_line
                                         )
 from typing import Optional
 
 torch.set_grad_enabled(False)
+
+MAX_TFLOPS = -1.0
+
+def print_gemm_result_info(TFLOPS:float,
+               out_info:str,
+               out_val:list,
+               mean_time_secs:float):
+    global MAX_TFLOPS
+    # calculate TFLOPS improved
+    if TFLOPS > MAX_TFLOPS:
+        if MAX_TFLOPS > 0:
+            improve = (TFLOPS - MAX_TFLOPS) / MAX_TFLOPS * 100
+            improve = round(improve, 2)
+        else:
+            improve = 0
+        MAX_TFLOPS = TFLOPS
+        print(f"{out_info:>32}: {out_val}, time:{mean_time_secs}ms, TFLOPS:{TFLOPS:<6.2f}(+{improve:.2f}%)")
 
 
 def run_benchmark(fn:callable, 
@@ -18,6 +34,9 @@ def run_benchmark(fn:callable,
                   b:torch.Tensor,
                   tag: str, 
                   out: Optional[torch.Tensor]=None,
+                  stages: int = -1, 
+                  swizzle: bool = False,
+                  swizzle_stride: int = 1,
                   num_warmups: int = 1, 
                   num_tests: int = 30,
                   show_all: bool = False):
@@ -36,7 +55,10 @@ def run_benchmark(fn:callable,
 
     # Warmup
     for _ in range(num_warmups):
-        fn(a, b, out)
+        if stages > 1:
+            fn(a, b, out, stages, swizzle, swizzle_stride)
+        else:
+            fn(a, b, out)
 
     torch.cuda.synchronize()
     # Testing
@@ -47,9 +69,15 @@ def run_benchmark(fn:callable,
         cache.zero_()
         
         # Record
-        start_events[i].record()
-        fn(a, b, out)
-        end_events[i].record()
+        if stages > 1:
+            start_events[i].record()
+            fn(a, b, out, stages, swizzle, swizzle_stride)
+            end_events[i].record()
+
+        else:
+            start_events[i].record()
+            fn(a, b, out)
+            end_events[i].record()
 
     torch.cuda.synchronize()
     total_times_secs = np.array([s.elapsed_time(e) / 1e3 for s, e in zip(start_events, end_events)])[1:]
@@ -76,7 +104,7 @@ def run_benchmark(fn:callable,
     return out, mean_time_secs
 
 if __name__ == "__main__":
-    gemm = try_load_gemm_library(verbose=True)
+    gemm = try_load_gemm_library(verbose=False)
     Ms = [1024, 2048, 4096, 8192]
     Ns = [1024, 2048, 4096, 8192]
     Ks = [512, 1024, 4096, 8192]
@@ -85,10 +113,14 @@ if __name__ == "__main__":
     # for(M, N, K) in MNKs:
     #     print(f"M={M}, N={N}, K={K}")
     for(M, N, K) in zip(Ms, Ns, Ks):
+        MAX_TFLOPS = -1
         pretty_print_line()
-        print(f"M={M}, N={N}, K={K}")
+        pretty_print_line(f"M={M}, N={N}, K={K}")
         a = torch.randn((M, K)).cuda().half().contiguous()
         b = torch.randn((K, N)).cuda().half().contiguous()
         c = torch.randn((M, N)).cuda().half().contiguous()
 
         run_benchmark(gemm.hgemm_naive_f16, a, b, "naive_fp16", c)
+        run_benchmark(gemm.hgemm_sliced_k_f16, a, b, "sliced_k_fp16", c)
+        run_benchmark(gemm.hgemm_mma_stages_block_swizzle_tn_cute, a, b, "tn(cute+stage4+swizzle<smem>)", c, stages=4)
+        pretty_print_line()

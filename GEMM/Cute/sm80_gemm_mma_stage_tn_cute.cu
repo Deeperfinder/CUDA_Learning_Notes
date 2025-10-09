@@ -343,6 +343,30 @@ void launch_hgemm_multi_stage_cute_wrapper(T *Cptr, T *Aptr, T *Bptr, int M, int
     gemm_multi_stage<ConfigT><<<grid, block, ConfigT::kShmSize>>>(Cptr, Aptr, Bptr, M, N, K);
 }
 
+template<typename T, const int Stages =2, const bool BlockSwizzle = false>
+void launch_hgemm_mma_stages_block_swizzle_tn_cute(T *a, T *b, T *c, int M, int N, int K, int swizzle_stride){
+  using namespace cute;  
+  int BM = 128;
+  int BN = 256;
+  int BK = 32;
+  using MyGemmConfig = config::GemmConfig<T, 128, 256, 32, Stages>;
+  
+  int BX = (N + BN -1) / BN;
+  int BY = (M + BM -1) / BM;
+  // int BZ = BlockSwizzle ? (N + (swizzle_stride) - 1) / (swizzle_stride) : 1;
+  // BX = BlockSwizzle ? (BX + BZ - 1) / BZ : BX;
+  // 这里的size大小为16x8 = 128
+  dim3 block(128);
+  dim3 grid(BX, BY);
+
+  cudaFuncSetAttribute(gemm_multi_stage<MyGemmConfig>,
+                         cudaFuncAttributeMaxDynamicSharedMemorySize, MyGemmConfig::kShmSize);
+  gemm_multi_stage<MyGemmConfig><<<grid, block, MyGemmConfig::kShmSize>>>(c, a, b, M, N, K);
+
+}
+
+#ifndef NO_CUTE_HGEMM_BIN
+
 int main(int argc, char *argv[]) {
   using T = cute::half_t;
   using namespace cute;
@@ -526,3 +550,91 @@ int main(int argc, char *argv[]) {
     print_tensor(t32x32_cublaslt);
   }
 }
+
+#else
+#include <torch/types.h>
+#include <torch/extension.h>
+// --------------------- PyTorch bindings for custom kernel -----------------------
+#define STRINGFY(str) #str
+#define TORCH_BINDING_COMMON_EXTENSION(func)   \
+  m.def(STRINGFY(func), &func, STRINGFY(func));
+
+#define CHECK_TORCH_TENSOR_DTYPE(T, th_type)                 \
+if(((T).options().dtype() != (th_type))) {                   \
+  std::cout << "Tensor Info:" << (T).options() << std::endl; \
+  throw std::runtime_error("values must be "#th_type);       \
+}
+
+#define CHECK_TORCH_TENSOR_SHAPE(T, S0, S1)           \
+if (((T).size(0) != (S0)) || ((T).size(1) != (S1))) { \
+  throw std::runtime_error("Tensor size mismatch!");  \
+}
+
+#define LAUNCH_HGEMM_MMA_STAGES_CUTE_NO_SWIZZLE_TN(stages)             \
+  launch_hgemm_mma_stages_block_swizzle_tn_cute<                       \
+  half, (stages), false>(                                              \
+    reinterpret_cast<half*>(a.data_ptr()),                             \
+    reinterpret_cast<half*>(b.data_ptr()),                             \
+    reinterpret_cast<half*>(c.data_ptr()),                             \
+    M, N, K, 2048                                                      \
+  );
+
+#define LAUNCH_HGEMM_MMA_STAGES_CUTE_SWIZZLE_TN(stages, stride)        \
+  launch_hgemm_mma_stages_block_swizzle_tn_cute<                       \
+  half, (stages), true>(                                               \
+    reinterpret_cast<half*>(a.data_ptr()),                             \
+    reinterpret_cast<half*>(b.data_ptr()),                             \
+    reinterpret_cast<half*>(c.data_ptr()),                             \
+    M, N, K, (stride)                                                  \
+  );
+
+
+// Multi stages CuTe HGEMM with SMEM Swizzle and Block Swizzle.
+void hgemm_mma_stages_block_swizzle_tn_cute(
+  torch::Tensor a, torch::Tensor b, torch::Tensor c,
+  int stages, bool swizzle, int swizzle_stride) {
+  CHECK_TORCH_TENSOR_DTYPE(a, torch::kHalf)
+  CHECK_TORCH_TENSOR_DTYPE(b, torch::kHalf)
+  CHECK_TORCH_TENSOR_DTYPE(c, torch::kHalf)
+  const int M = a.size(0);
+  const int K = a.size(1);
+  const int N = b.size(1); 
+  CHECK_TORCH_TENSOR_SHAPE(a, M, K)
+  CHECK_TORCH_TENSOR_SHAPE(b, K, N)
+  CHECK_TORCH_TENSOR_SHAPE(c, M, N)
+
+  if (swizzle) {
+    switch (stages)
+    {
+      case 2: 
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_SWIZZLE_TN(2, swizzle_stride);
+        break;
+      case 3: 
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_SWIZZLE_TN(3, swizzle_stride);
+        break;
+      case 4: 
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_SWIZZLE_TN(4, swizzle_stride);
+        break;
+      default:
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_SWIZZLE_TN(2, swizzle_stride);
+        break;
+    }
+  } else {
+    switch (stages) {
+      case 2:
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_NO_SWIZZLE_TN(2)
+        break;
+      case 3:
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_NO_SWIZZLE_TN(3)
+        break;
+      case 4:
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_NO_SWIZZLE_TN(4)
+        break;
+      default:
+        LAUNCH_HGEMM_MMA_STAGES_CUTE_NO_SWIZZLE_TN(2)
+        break;
+    }
+  }
+}
+
+#endif

@@ -131,9 +131,3 @@ void hgemm_sliced_k_f16(torch::Tensor a, torch::Tensor b, torch::Tensor c){
     );
 }
 
-
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m){
-    TORCH_BINDING_COMMON_EXTENSION(hgemm_naive_f16)
-    TORCH_BINDING_COMMON_EXTENSION(hgemm_sliced_k_f16)
-}
