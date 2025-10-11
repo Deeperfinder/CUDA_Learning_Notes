@@ -34,7 +34,6 @@ def get_build_cuda_cflags(build_pkg: bool = True):
 
     # add cutlass and link cublas
     project_dir = get_project_dir()
-    print(f"project_dir : {project_dir}")
     extra_cuda_cflags.append(f"-I {project_dir}/3rdparty/cutlass/include")
     extra_cuda_cflags.append(f'-I {project_dir}/GEMM/utils/')
     extra_cuda_cflags.append('-lcublas')
