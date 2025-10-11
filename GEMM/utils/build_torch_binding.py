@@ -18,7 +18,6 @@ def get_build_cuda_cflags(build_pkg: bool = True):
     extra_cuda_cflags.append("--expt-extended-lambda")
     extra_cuda_cflags.append("--use_fast_math")
     if not build_pkg:
-      extra_cuda_cflags.append("-diag-suppress 177")
       # 将-v选项传递给PTX assember
       # 输出内容： 
       #     register使用情况，
@@ -26,6 +25,7 @@ def get_build_cuda_cflags(build_pkg: bool = True):
       #     常量内存使用、
       #     栈溢出：因寄存器不足而spill到local mem的次数
       extra_cuda_cflags.append("-Xptxas -v")
+      extra_cuda_cflags.append("-diag-suppress 177")
     else:
       extra_cuda_cflags.append("--ptxas-options=-v")
     # extra cuda flags for cute hgemm
@@ -45,6 +45,7 @@ def get_build_sources():
     build_sources = []
     build_sources.append('naive/hgemm.cu')
     build_sources.append('Cute/sm80_gemm_mma_stage_tn_cute.cu')
+    build_sources.append("cublas/hgemm_cublas.cu")
     build_sources.append('utils/pybinding.cc')
 
     return build_sources
@@ -64,7 +65,7 @@ def build_from_sources(verbose: bool= False):
     
     return load(name = 'Mix_GEMM',
                 sources = get_build_sources(),  
-                extra_cuda_cflags = get_build_cuda_cflags(),
+                extra_cuda_cflags = get_build_cuda_cflags(False),
                 extra_cflags = ["-std=c++17"],
                 verbose=verbose
 )

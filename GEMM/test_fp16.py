@@ -26,7 +26,7 @@ def print_gemm_result_info(TFLOPS:float,
         else:
             improve = 0
         MAX_TFLOPS = TFLOPS
-        print(f"{out_info:>32}: {out_val}, time:{mean_time_secs}ms, TFLOPS:{TFLOPS:<6.2f}(+{improve:.2f}%)")
+        print(f"{out_info:>32}: {out_val}, time:{mean_time_secs * 1e3:.2f}ms, TFLOPS:{TFLOPS:<6.2f}(+{improve:.2f}%)")
 
 
 def run_benchmark(fn:callable, 
@@ -80,7 +80,7 @@ def run_benchmark(fn:callable,
             end_events[i].record()
 
     torch.cuda.synchronize()
-    total_times_secs = np.array([s.elapsed_time(e) / 1e3 for s, e in zip(start_events, end_events)])[1:]
+    total_times_secs = np.array([s.elapsed_time(e)*1e-3 for s, e in zip(start_events, end_events)])[1:]
     mean_time_secs = np.average(total_times_secs)
     out_info = f"{tag}"
     out_flat = out.flatten()
@@ -119,8 +119,8 @@ if __name__ == "__main__":
         a = torch.randn((M, K)).cuda().half().contiguous()
         b = torch.randn((K, N)).cuda().half().contiguous()
         c = torch.randn((M, N)).cuda().half().contiguous()
-
-        run_benchmark(gemm.hgemm_naive_f16, a, b, "naive_fp16", c)
-        run_benchmark(gemm.hgemm_sliced_k_f16, a, b, "sliced_k_fp16", c)
+        run_benchmark(gemm.hgemm_naive_f16, a, b, "(naive_fp16)", c)
+        run_benchmark(gemm.hgemm_sliced_k_f16, a, b, "(sliced_k_fp16)", c)
         run_benchmark(gemm.hgemm_mma_stages_block_swizzle_tn_cute, a, b, "tn(cute+stage4+swizzle<smem>)", c, stages=4)
+        run_benchmark(gemm.hgemm_cublas_tensor_op_nn, a, b, "(cublas)", c)
         pretty_print_line()
